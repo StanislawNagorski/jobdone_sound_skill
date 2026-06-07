@@ -24,6 +24,8 @@ The skill has four files:
 - `jobs-done.sh`, a small bash wrapper around macOS `afplay` with two modes.
 - `assets/jobs-done.mp3`, the "work finished, idle" sound.
 - `assets/your-command-master.mp3`, the "blocked, needs your input" sound.
+  This one is the Warcraft II Footman voice line **"Your orders?"**. See
+  [Credits](#credits) for the source.
 
 Drop the folder somewhere your agent scans for skills and the agent picks
 it up on its own.
@@ -217,6 +219,27 @@ a question and need my answer to proceed; otherwise use `done`."
 "When NOT to run" section, or just tell the agent in your prompt: "Run
 jobs-done only at the very end of the turn, never between steps."
 
+## Credits
+
+### Audio sources
+
+| File                              | Source                                                                                       |
+|-----------------------------------|----------------------------------------------------------------------------------------------|
+| `assets/jobs-done.mp3`            | Personal sample, included as the default "work finished" notification.                       |
+| `assets/your-command-master.mp3`  | Warcraft II Footman voice line "Your orders?" (file `Hwhat2.wav` from *Warcraft II: Tides of Darkness*, 1995, Blizzard Entertainment). Sourced via [warcraft.wiki.gg](https://warcraft.wiki.gg/wiki/Quotes_of_Warcraft_II#Footman). |
+
+The Warcraft II audio sample is the property of Blizzard Entertainment and
+is included here for personal, non-commercial use as a notification chime.
+If you redistribute this skill, swap the file for one you have the rights
+to, or set `JOBS_DONE_AUDIO_INPUT` to point at your own sound.
+
+### Code
+
+MIT-licensed. The bash script, SKILL.md, and surrounding documentation
+were written from scratch for this project.
+
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+MIT. See [LICENSE](./LICENSE). Applies to the code and documentation
+only. The Warcraft II audio sample is governed by Blizzard's rights as
+described in [Credits](#credits).
