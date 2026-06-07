@@ -1,6 +1,6 @@
 ---
 name: jobs-done
-description: Play a short audio notification (macOS) whenever the agent's turn ends. Two modes - `done` for "work finished, idle, no question pending" and `input` for "blocked, need user's decision before continuing". ALWAYS play exactly one sound at the end of every turn that hands control back to the user, and choose the mode based on whether the agent is asking the user a question. Do NOT play between intermediate tool calls. Do NOT play more than once per turn. Trigger keywords - jobs done, your command master, agent finished, agent waiting, end of turn notification, audio ping, pause for user.
+description: Play EXACTLY ONE short audio notification (macOS) at the end of every agent turn. Pick ONE of two modes - never both, never two sounds in a row. Use `done` when work is finished and no question is pending. Use `input` when blocked and waiting for the user's decision. The two modes are mutually exclusive - if you fire one, you do NOT fire the other in the same turn. Do NOT play between intermediate tool calls. Do NOT play more than once per turn. Trigger keywords - jobs done, your command master, agent finished, agent waiting, end of turn notification, audio ping, pause for user.
 license: MIT
 compatibility: claude-code opencode
 allowed-tools:
@@ -11,6 +11,36 @@ allowed-tools:
 
 Play a notification sound on macOS at the end of every agent turn so the
 human knows control is back to them, and what kind of attention is needed.
+
+## CRITICAL RULE: one sound per turn, never both
+
+The two modes (`done` and `input`) are **mutually exclusive**. In a single
+turn you fire **exactly one** of them, **never both**.
+
+If you've already run `jobs-done.sh done` in this turn, you do NOT also run
+`jobs-done.sh input`. If you've already run `jobs-done.sh input`, you do
+NOT also run `jobs-done.sh done`. Pick one before you call the script and
+stick with it.
+
+Wrong:
+
+```bash
+"${SKILL_DIR}/jobs-done.sh" done
+"${SKILL_DIR}/jobs-done.sh" input   # NO. Already played one. Stop.
+```
+
+Right (pick one of these, not both):
+
+```bash
+"${SKILL_DIR}/jobs-done.sh" done    # turn ends without a pending question
+```
+
+```bash
+"${SKILL_DIR}/jobs-done.sh" input   # turn ends asking the user something
+```
+
+If you catch yourself about to play a second sound in the same turn, do
+nothing instead. One turn, one sound.
 
 ## Two sounds, two states
 
@@ -65,10 +95,14 @@ If you're unsure, default to **`done`**. It's the lower-friction signal.
 
 ## How to run
 
-```bash
-# Default: agent finished, no question pending
-"${SKILL_DIR}/jobs-done.sh" done
+Pick **one** of the two commands below per turn. Never both.
 
+```bash
+# Agent finished, no question pending
+"${SKILL_DIR}/jobs-done.sh" done
+```
+
+```bash
 # Agent is asking for a decision and waiting
 "${SKILL_DIR}/jobs-done.sh" input
 ```
@@ -120,8 +154,12 @@ exits with code 2. That's expected.
 
 ## Anti-spam guardrails
 
-- Run the script at most once per turn.
-- Pick exactly one mode (`done` or `input`), never both.
+- Run the script **at most once per turn**.
+- Pick exactly one mode (`done` or `input`). **Never both in the same turn.**
+- If you've already played a sound in this turn, the next sound waits for
+  the next turn. No exceptions, even if your circumstances changed mid-turn
+  (e.g. you finished work and then realized you also have a question).
+  Pick the mode that fits your final message and stop.
 - Treat each new user message as a fresh turn. Fire again only when that
   new turn itself ends in "idle" or "blocked-on-input".
 - Never loop, never schedule, never queue multiple playbacks.
@@ -156,3 +194,16 @@ Use `done`:**
 > rather.)
 >
 > *(runs `jobs-done.sh done`)*
+
+**WRONG: playing both sounds in one turn.**
+
+> Finished the refactor. By the way, should the timezone stay UTC or
+> switch to local?
+>
+> *(runs `jobs-done.sh done`)*
+> *(runs `jobs-done.sh input`)*   <- NO. One turn, one sound.
+
+The message above asks a question that changes what happens next, so the
+correct call is **only** `jobs-done.sh input`. The `done` call should not
+have happened. If you genuinely don't know which to pick, default to
+`done` and stop.
