@@ -1,6 +1,6 @@
 ---
 name: jobs-done
-description: Play EXACTLY ONE short audio notification (macOS) at the end of every agent turn, but ONLY after every subagent, background process, parallel wave, and queued task for this session has fully finished. Pick ONE of two modes - never both, never two sounds in a row. Use `done` ONLY when all work (including all spawned subagents and background jobs) is complete AND no question is pending. Use `input` when blocked and waiting for the user's decision. The two modes are mutually exclusive - if you fire one, you do NOT fire the other in the same turn. Do NOT play between intermediate tool calls. Do NOT play after a single wave or subagent finishes if more work is still running or pending. Do NOT play more than once per turn. Trigger keywords - jobs done, your command master, agent finished, agent waiting, end of turn notification, audio ping, pause for user.
+description: Play AT MOST ONE short audio notification (macOS) per agent turn, but ONLY after every subagent, background process, parallel wave, and queued task for this session has fully finished. Pick ONE of two modes - never both, never two sounds in a row. Use `done` ONLY when all work is complete AND no question is pending. Use `input` when blocked and waiting for the user's decision. SKIP the sound entirely (silent turn) when only acknowledging a background-task progress notification with more background work still pending and no question for the user - the sound would falsely signal that the user needs to act. The two modes are mutually exclusive - if you fire one, you do NOT fire the other in the same turn. Do NOT play between intermediate tool calls. Do NOT play after a single wave or subagent finishes if more work is still running or pending. Do NOT play more than once per turn. Trigger keywords - jobs done, your command master, agent finished, agent waiting, end of turn notification, audio ping, pause for user.
 license: MIT
 compatibility: claude-code opencode
 allowed-tools:
@@ -100,15 +100,24 @@ Right:
 "${SKILL_DIR}/jobs-done.sh" done
 ```
 
-## Two sounds, two states
+## Two sounds, two states (and one silent case)
 
-| Mode    | When                                                               | Sound                          |
-|---------|--------------------------------------------------------------------|--------------------------------|
-| `done`  | **Entire session is idle.** All subagents, background processes, and parallel waves have finished. No question pending. | `assets/jobs-done.mp3`         |
-| `input` | Stopping mid-flow because you need a decision or answer before continuing. | `assets/your-command-master.mp3` |
+| Mode       | When                                                               | Sound                          |
+|------------|--------------------------------------------------------------------|--------------------------------|
+| `done`     | **Entire session is idle.** All subagents, background processes, and parallel waves have finished. No question pending. | `assets/jobs-done.mp3`         |
+| `input`    | Stopping mid-flow because you need a decision or answer before continuing. | `assets/your-command-master.mp3` |
+| *(silent)* | Acknowledging a background-task progress notification while more background work is still in flight. No question for the user, no real handoff. | *(no sound)*                   |
 
-Decision rule: **if your final message contains a question for the user
-that you intend to act on next, use `input`. Otherwise use `done`.**
+Decision rule, checked in order:
+
+1. **`input`** if your final message asks the user something whose answer
+   changes what you do next.
+2. **`done`** if the entire session is now idle (all subagents and
+   background jobs finished) and you're handing meaningful control back.
+3. **Silent** if you're only reporting that a background agent or job
+   just finished AND other background work is still running AND you're
+   not asking the user anything. Playing any sound here would falsely
+   signal "your turn now" when nothing is waiting on the user.
 
 ## When to run
 
@@ -224,7 +233,8 @@ exits with code 2. That's expected.
 
 ## Anti-spam guardrails
 
-- Run the script **at most once per turn**.
+- Run the script **at most once per turn**. Zero plays is fine and is
+  the right call for silent (background-acknowledge) turns.
 - Pick exactly one mode (`done` or `input`). **Never both in the same turn.**
 - **Do NOT play `done` while ANY subagent, background process, or queued
   wave is still running.** A wave finishing is not the session finishing.
@@ -233,7 +243,8 @@ exits with code 2. That's expected.
   (e.g. you finished work and then realized you also have a question).
   Pick the mode that fits your final message and stop.
 - Treat each new user message as a fresh turn. Fire again only when that
-  new turn itself ends in "idle" or "blocked-on-input".
+  new turn itself ends in "idle" or "blocked-on-input". NOT when it ends
+  in "still waiting on background work, just acknowledging progress".
 - Never loop, never schedule, never queue multiple playbacks.
 
 ## Examples
@@ -266,6 +277,14 @@ Use `done`:**
 > rather.)
 >
 > *(runs `jobs-done.sh done`)*
+
+**Background-task progress update with more work in flight. End silently:**
+
+> Agent 2 of 4 just reported back. Agents 1, 3, and 4 are still running.
+> I'll process all results once they're in. Nothing for you to do.
+>
+> *(no sound. The user isn't being handed control. Playing `done` would
+> falsely signal "your turn now" when nothing is waiting on them.)*
 
 **WRONG: playing both sounds in one turn.**
 
