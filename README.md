@@ -8,38 +8,38 @@
 When your agent (Claude Code, opencode, Cursor agent, etc.) ends a turn,
 it plays one of two sounds:
 
-- **`done`** → "I finished. Nothing to decide. You can come back whenever."
-- **`input`** → "I stopped because I need your call before I keep going."
+- `done` means "I finished. Nothing to decide. You can come back whenever."
+- `input` means "I stopped because I need your call before I keep going."
 
 No more glancing at the terminal every 30 seconds wondering if it's done,
 and no more missing the moments where the agent is actually waiting on you.
 
 ## How it works
 
-A skill that ships:
+The skill has four files:
 
-- `SKILL.md` — instructions telling the agent **exactly** when to fire each
-  sound (always once per turn; choose `done` or `input` based on whether
-  the agent needs your decision).
-- `jobs-done.sh` — a tiny bash wrapper around macOS `afplay` with two modes.
-- `assets/jobs-done.mp3` — the "work finished, idle" sound.
-- `assets/your-command-master.mp3` — the "blocked, needs your input" sound.
+- `SKILL.md`, the instructions that tell the agent when to fire each sound
+  (always once per turn, with the mode chosen by whether the agent needs
+  your decision).
+- `jobs-done.sh`, a small bash wrapper around macOS `afplay` with two modes.
+- `assets/jobs-done.mp3`, the "work finished, idle" sound.
+- `assets/your-command-master.mp3`, the "blocked, needs your input" sound.
 
-When installed in a location your agent scans for skills, the agent will
-discover it automatically and start using it.
+Drop the folder somewhere your agent scans for skills and the agent picks
+it up on its own.
 
 ## Requirements
 
 - macOS (uses the system `/usr/bin/afplay`)
-- One of: Claude Code, opencode, or any agent that supports the Agent
-  Skills convention (`SKILL.md` with frontmatter)
+- Claude Code, opencode, or any agent that supports the Agent Skills
+  convention (a `SKILL.md` with frontmatter)
 
 ## Installation
 
-### Option 1 — Quick install (recommended)
+### Option 1: quick install (recommended)
 
-Clone into the Claude skills directory. **Both Claude Code and opencode
-auto-scan `~/.claude/skills/`**, so a single install covers both:
+Clone into the Claude skills directory. Both Claude Code and opencode
+auto-scan `~/.claude/skills/`, so a single install covers both:
 
 ```bash
 mkdir -p ~/.claude/skills
@@ -53,10 +53,10 @@ Verify the sound works:
 ~/.claude/skills/jobs-done/jobs-done.sh
 ```
 
-Restart your agent (quit and relaunch Claude Code / opencode) so the skill
+Restart your agent (quit and relaunch Claude Code or opencode) so the skill
 is picked up.
 
-### Option 2 — Install for opencode only
+### Option 2: install for opencode only
 
 opencode also scans `~/.config/opencode/skills/`:
 
@@ -68,7 +68,7 @@ chmod +x ~/.config/opencode/skills/jobs-done/jobs-done.sh
 
 Restart opencode.
 
-### Option 3 — Per-project install
+### Option 3: per-project install
 
 Put the skill in a single project so only agents working in that repo use
 it:
@@ -83,7 +83,7 @@ git submodule add https://github.com/StanislawNagorski/jobdone_sound_skill.git \
 chmod +x .opencode/skills/jobs-done/jobs-done.sh
 ```
 
-### Option 4 — Manual install
+### Option 4: manual install
 
 Download or copy the `jobs-done/` folder anywhere your agent scans for
 skills, then `chmod +x jobs-done.sh`. Supported defaults:
@@ -92,7 +92,7 @@ skills, then `chmod +x jobs-done.sh`. Supported defaults:
 |--------------|------------------------------------------|---------------------------|
 | Claude Code  | `~/.claude/skills/`                      | `.claude/skills/`         |
 | opencode     | `~/.config/opencode/skills/`             | `.opencode/skills/`       |
-| opencode (alt) | `~/.claude/skills/`, `~/.agents/skills/` | —                         |
+| opencode (alt) | `~/.claude/skills/`, `~/.agents/skills/` | none                      |
 
 ## Verifying
 
@@ -108,16 +108,16 @@ After install, test both sounds directly:
 
 Then ask your agent to do anything trivial ("list files in this dir"). When
 it finishes, you should hear the `done` sound. Ask it something ambiguous
-that forces it to ask you a question — you should hear the `input` sound
+that forces it to ask you a question, and you should hear the `input` sound
 instead.
 
 If the agent doesn't fire it on its own, ask it explicitly:
 
-> Run the `jobs-done` skill at the end of every turn — `done` mode when
+> Run the `jobs-done` skill at the end of every turn. Use `done` mode when
 > you're finished, `input` mode when you're asking me a question.
 
-If it still doesn't trigger, the skill probably isn't being discovered —
-double-check the install path and restart the agent.
+If it still doesn't trigger, the skill probably isn't being discovered.
+Double-check the install path and restart the agent.
 
 ## Configuration
 
@@ -136,7 +136,8 @@ Example (set permanently for quieter pings):
 echo 'export JOBS_DONE_VOLUME=0.4' >> ~/.zshrc
 ```
 
-Use your own sounds (any format `afplay` supports — mp3, m4a, wav, aiff):
+Use your own sounds (any format `afplay` supports, including mp3, m4a, wav,
+aiff):
 
 ```bash
 echo 'export JOBS_DONE_AUDIO_DONE="$HOME/sounds/finished.m4a"' >> ~/.zshrc
@@ -193,8 +194,8 @@ Restart the agent.
 
 ## Troubleshooting
 
-**No sound, exit code 0.** Check system volume; make sure macOS isn't fully
-muted. Focus / Do Not Disturb does **not** block `afplay`.
+**No sound, exit code 0.** Check system volume and make sure macOS isn't
+fully muted. Focus and Do Not Disturb do not block `afplay`.
 
 **`afplay: command not found`.** You're not on macOS. This skill is
 mac-only. On Linux you'd swap `afplay` for `paplay` or `aplay` and edit the
@@ -204,7 +205,7 @@ script.
 
 1. Confirm `SKILL.md` lives directly under the skill folder, not nested.
 2. Confirm the install path matches a directory your agent scans.
-3. Fully quit and relaunch the agent — skills are loaded at startup.
+3. Fully quit and relaunch the agent. Skills are loaded at startup.
 4. In opencode, check `/skills` (or the equivalent) to see if `jobs-done`
    is listed.
 
@@ -218,4 +219,4 @@ jobs-done only at the very end of the turn, never between steps."
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT. See [LICENSE](./LICENSE).
