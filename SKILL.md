@@ -1,6 +1,6 @@
 ---
 name: jobs-done
-description: Play EXACTLY ONE short audio notification (macOS) at the end of every agent turn. Pick ONE of two modes - never both, never two sounds in a row. Use `done` when work is finished and no question is pending. Use `input` when blocked and waiting for the user's decision. The two modes are mutually exclusive - if you fire one, you do NOT fire the other in the same turn. Do NOT play between intermediate tool calls. Do NOT play more than once per turn. Trigger keywords - jobs done, your command master, agent finished, agent waiting, end of turn notification, audio ping, pause for user.
+description: Play EXACTLY ONE short audio notification (macOS) at the end of every agent turn, but ONLY after every subagent, background process, parallel wave, and queued task for this session has fully finished. Pick ONE of two modes - never both, never two sounds in a row. Use `done` ONLY when all work (including all spawned subagents and background jobs) is complete AND no question is pending. Use `input` when blocked and waiting for the user's decision. The two modes are mutually exclusive - if you fire one, you do NOT fire the other in the same turn. Do NOT play between intermediate tool calls. Do NOT play after a single wave or subagent finishes if more work is still running or pending. Do NOT play more than once per turn. Trigger keywords - jobs done, your command master, agent finished, agent waiting, end of turn notification, audio ping, pause for user.
 license: MIT
 compatibility: claude-code opencode
 allowed-tools:
@@ -42,11 +42,69 @@ Right (pick one of these, not both):
 If you catch yourself about to play a second sound in the same turn, do
 nothing instead. One turn, one sound.
 
+## CRITICAL RULE: `done` only after EVERYTHING finishes
+
+`done` means **the entire session for this user request is idle**. Not
+"the current step finished". Not "the current wave finished". Not "the
+subagent I spawned finished".
+
+Before you fire `jobs-done.sh done`, verify ALL of the following are true:
+
+- Every tool call you've made has returned.
+- Every subagent / task / delegated worker you've spawned has reported back
+  with its final result.
+- Every background process you've kicked off (e.g. `(some_cmd &)`,
+  `nohup`, long-running watchers, dev servers, build pipelines, file
+  watchers) is either finished OR explicitly intentional (a server the
+  user asked you to leave running).
+- Every parallel wave / phase / batch has fully completed; no wave is
+  still in flight or queued.
+- There is no follow-up work you yourself are about to start.
+
+If ANY of those is still live, do NOT play `done`. Either:
+
+1. Wait for it to finish, THEN play `done` (preferred), or
+2. Use `input` if you're actually pausing to ask the user about it.
+
+The most common failure mode: playing `done` after the first wave of a
+multi-wave job, because that wave "feels finished". It isn't finished.
+The session is finished only when the whole tree of work is finished.
+
+Wrong:
+
+```bash
+# Wave 1 of 3 just completed, waves 2 and 3 still queued
+"${SKILL_DIR}/jobs-done.sh" done   # NO. More work is pending.
+```
+
+Wrong:
+
+```bash
+# Spawned 3 subagents in parallel, only 1 has reported back
+"${SKILL_DIR}/jobs-done.sh" done   # NO. The other 2 are still running.
+```
+
+Wrong:
+
+```bash
+# Started a background server with `(npm run dev &)` 30 seconds ago
+"${SKILL_DIR}/jobs-done.sh" done   # NO, unless the user asked you to
+                                   # leave it running and you've told
+                                   # them so in this turn's message.
+```
+
+Right:
+
+```bash
+# All 3 subagents reported back, all waves done, no background jobs left
+"${SKILL_DIR}/jobs-done.sh" done
+```
+
 ## Two sounds, two states
 
 | Mode    | When                                                               | Sound                          |
 |---------|--------------------------------------------------------------------|--------------------------------|
-| `done`  | Work is finished. No question pending. Just summarising and idling. | `assets/jobs-done.mp3`         |
+| `done`  | **Entire session is idle.** All subagents, background processes, and parallel waves have finished. No question pending. | `assets/jobs-done.mp3`         |
 | `input` | Stopping mid-flow because you need a decision or answer before continuing. | `assets/your-command-master.mp3` |
 
 Decision rule: **if your final message contains a question for the user
@@ -58,6 +116,10 @@ Run **exactly once per turn**, as the very last action before producing
 your closing message. In practice:
 
 - All tool calls for this turn are complete.
+- All subagents you spawned have reported back.
+- All background processes you started are finished (or explicitly
+  intentional to keep running, per the section above).
+- All parallel waves / phases have wrapped up.
 - The next thing about to happen is the user reading your message.
 - You have decided whether you are "done" or "asking for input".
 
@@ -68,6 +130,10 @@ should end silently.
 
 - Not between intermediate tool calls inside a single turn.
 - Not after every tool call. Only once at the very end.
+- **Not after a single wave finishes when more waves are still queued.**
+- **Not after a subagent reports back when other subagents are still running.**
+- **Not while a background process you started is still doing useful
+  work** (unless leaving it running is the intended deliverable).
 - Not more than once per turn (no double-sound, no "done then input" combo).
 - Not in non-interactive contexts (CI, scripted runs, batch jobs).
 - Not if the user explicitly asked to silence notifications this session.
@@ -76,7 +142,8 @@ should end silently.
 
 Use **`done`** when:
 
-- The user's request is fully completed.
+- The user's request is **fully** completed, including all spawned
+  subagents, background jobs, and parallel waves.
 - You are summarising results and moving aside.
 - Any question in your message is purely rhetorical ("let me know if you
   want changes" style). You are not actively waiting on a specific answer
@@ -91,7 +158,10 @@ Use **`input`** when:
 - The plan branches and you cannot pick the right branch on your own.
 - You're presenting options and waiting for the user to choose.
 
-If you're unsure, default to **`done`**. It's the lower-friction signal.
+If you're unsure whether work is fully complete, do NOT play `done` yet.
+Wait for everything to finish first. Only after the session is truly idle
+should you fire `done`. If you're unsure between `done` and `input` in a
+truly-idle state, default to `done`.
 
 ## How to run
 
@@ -156,6 +226,8 @@ exits with code 2. That's expected.
 
 - Run the script **at most once per turn**.
 - Pick exactly one mode (`done` or `input`). **Never both in the same turn.**
+- **Do NOT play `done` while ANY subagent, background process, or queued
+  wave is still running.** A wave finishing is not the session finishing.
 - If you've already played a sound in this turn, the next sound waits for
   the next turn. No exceptions, even if your circumstances changed mid-turn
   (e.g. you finished work and then realized you also have a question).
@@ -207,3 +279,39 @@ The message above asks a question that changes what happens next, so the
 correct call is **only** `jobs-done.sh input`. The `done` call should not
 have happened. If you genuinely don't know which to pick, default to
 `done` and stop.
+
+**WRONG: playing `done` after the first wave when more waves are queued.**
+
+> Wave 1 of 3 complete. Starting wave 2 now.
+>
+> *(runs `jobs-done.sh done`)*   <- NO. Session is not idle. More work
+>                                    is about to run.
+
+`done` means the **entire session** is idle. Wave 1 finishing is an
+intermediate step, not the end. Do not play any sound here. Wait until
+all 3 waves have completed, then play `done` once.
+
+**WRONG: playing `done` while a subagent is still running.**
+
+> I spawned a research agent to investigate option B. Here are my
+> findings on options A and C in the meantime.
+>
+> *(runs `jobs-done.sh done`)*   <- NO. The research agent is still
+>                                    running. Session is not idle.
+
+Either wait for the subagent to return and then play `done` once, or
+(if you're explicitly pausing for the user's input on A and C before
+deciding what to do with B's eventual result) play `input` instead.
+
+**WRONG: playing `done` while a background process is still doing work.**
+
+> Started the test suite in the background and started the linter.
+> Here's the file structure in the meantime.
+>
+> *(runs `jobs-done.sh done`)*   <- NO. Tests and linter haven't
+>                                    finished. Session is not idle.
+
+Wait for the background jobs to finish (or kill them) before playing
+`done`. The only exception is a process the user explicitly asked you to
+leave running (e.g. a dev server), and in that case your turn message
+should make that clear.
