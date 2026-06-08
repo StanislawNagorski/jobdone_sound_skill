@@ -2,30 +2,39 @@
 # jobs-done.sh — plays a short notification sound to signal a state change
 # in an AI coding agent's turn.
 #
-# Two modes:
-#   done   (default) — agent finished its work and is going idle
-#                      → plays assets/jobs-done.mp3
-#   input            — agent is blocked and needs your decision/input
-#                      → plays assets/your-command-master.mp3
+# Modes:
+#   done    (default) — agent finished its work and is going idle
+#                       → plays assets/jobs-done.mp3
+#   input             — agent is blocked and needs your decision/input
+#                       → plays assets/your-command-master.mp3
+#   mute              — silence all sounds until resume is called
+#                       → creates a lockfile in /tmp; no audio plays
+#   resume            — re-enable sounds after mute
+#                       → removes the lockfile
+#   status            — print whether sounds are currently muted
 #
 # Resolves audio files relative to this script's location, so the skill
 # works regardless of where it was installed.
 #
 # Usage:
-#   ./jobs-done.sh                # done mode (default), play in background
-#   ./jobs-done.sh done            # explicit done mode
-#   ./jobs-done.sh input           # input-needed mode
-#   ./jobs-done.sh done --wait     # block until playback finishes
-#   ./jobs-done.sh --help          # show help
+#   ./jobs-done.sh                  # done mode (default), play in background
+#   ./jobs-done.sh done             # explicit done mode
+#   ./jobs-done.sh input            # input-needed mode
+#   ./jobs-done.sh mute             # silence sounds until resume
+#   ./jobs-done.sh resume           # re-enable sounds
+#   ./jobs-done.sh status           # show mute status
+#   ./jobs-done.sh done --wait      # block until playback finishes
+#   ./jobs-done.sh --help           # show help
 #
 # Env vars:
 #   JOBS_DONE_VOLUME       0.0–2.0+, default 1.0
 #   JOBS_DONE_AUDIO_DONE   override path for the "done" sound
 #   JOBS_DONE_AUDIO_INPUT  override path for the "input" sound
 #   JOBS_DONE_AUDIO        legacy: override "done" sound (still respected)
+#   JOBS_DONE_MUTE_FILE    override mute lockfile path (default /tmp/jobs-done-mute)
 #
 # Exit codes:
-#   0  — sound played (or started in background)
+#   0  — sound played, started in background, or skipped due to mute
 #   1  — audio file missing
 #   2  — afplay not available (non-macOS system)
 #   64 — unknown argument
@@ -40,17 +49,19 @@ DEFAULT_INPUT_AUDIO="$SCRIPT_DIR/assets/your-command-master.mp3"
 DONE_AUDIO="${JOBS_DONE_AUDIO_DONE:-${JOBS_DONE_AUDIO:-$DEFAULT_DONE_AUDIO}}"
 INPUT_AUDIO="${JOBS_DONE_AUDIO_INPUT:-$DEFAULT_INPUT_AUDIO}"
 
+MUTE_FILE="${JOBS_DONE_MUTE_FILE:-/tmp/jobs-done-mute}"
+
 VOLUME="${JOBS_DONE_VOLUME:-1.0}"
 MODE="done"
 WAIT=0
 
 print_help() {
-  sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    done|input)
+    done|input|mute|resume|status)
       MODE="$1"
       shift
       ;;
@@ -68,6 +79,38 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# Handle control modes first.
+case "$MODE" in
+  mute)
+    : > "$MUTE_FILE"
+    echo "jobs-done: muted (lockfile: $MUTE_FILE)"
+    exit 0
+    ;;
+  resume)
+    if [[ -f "$MUTE_FILE" ]]; then
+      rm -f "$MUTE_FILE"
+      echo "jobs-done: resumed (lockfile removed)"
+    else
+      echo "jobs-done: already active (no lockfile to remove)"
+    fi
+    exit 0
+    ;;
+  status)
+    if [[ -f "$MUTE_FILE" ]]; then
+      echo "jobs-done: MUTED (lockfile: $MUTE_FILE)"
+    else
+      echo "jobs-done: active"
+    fi
+    exit 0
+    ;;
+esac
+
+# Playback modes from here on. Check mute first.
+if [[ -f "$MUTE_FILE" ]]; then
+  # Silent success. Agent should treat this as "sound handled, move on".
+  exit 0
+fi
 
 case "$MODE" in
   done)  AUDIO_FILE="$DONE_AUDIO" ;;

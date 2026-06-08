@@ -1,6 +1,6 @@
 ---
 name: jobs-done
-description: Play AT MOST ONE short audio notification (macOS) per agent turn, but ONLY after every subagent, background process, parallel wave, and queued task for this session has fully finished. Pick ONE of two modes - never both, never two sounds in a row. Use `done` ONLY when all work is complete AND no question is pending. Use `input` when blocked and waiting for the user's decision. SKIP the sound entirely (silent turn) when only acknowledging a background-task progress notification with more background work still pending and no question for the user - the sound would falsely signal that the user needs to act. The two modes are mutually exclusive - if you fire one, you do NOT fire the other in the same turn. Do NOT play between intermediate tool calls. Do NOT play after a single wave or subagent finishes if more work is still running or pending. Do NOT play more than once per turn. Trigger keywords - jobs done, your command master, agent finished, agent waiting, end of turn notification, audio ping, pause for user.
+description: Play AT MOST ONE short audio notification (macOS) per agent turn, but ONLY after every subagent, background process, parallel wave, and queued task for this session has fully finished. Pick ONE of two modes - never both, never two sounds in a row. Use `done` ONLY when all work is complete AND no question is pending. Use `input` when blocked and waiting for the user's decision. SKIP the sound entirely (silent turn) when only acknowledging a background-task progress notification with more background work still pending and no question for the user - the sound would falsely signal that the user needs to act. The two modes are mutually exclusive - if you fire one, you do NOT fire the other in the same turn. Do NOT play between intermediate tool calls. Do NOT play after a single wave or subagent finishes if more work is still running or pending. Do NOT play more than once per turn. Honor the mute lockfile /tmp/jobs-done-mute - if it exists the script no-ops, but you should also skip the call to save a tool call. Trigger keywords - jobs done, your command master, agent finished, agent waiting, end of turn notification, audio ping, pause for user, mute sounds, resume sounds.
 license: MIT
 compatibility: claude-code opencode
 allowed-tools:
@@ -99,6 +99,32 @@ Right:
 # All 3 subagents reported back, all waves done, no background jobs left
 "${SKILL_DIR}/jobs-done.sh" done
 ```
+
+## Mute mechanism
+
+The user can silence the skill for the rest of a session by running the
+slash command `/jobs-done-mute`. This creates a lockfile at
+`/tmp/jobs-done-mute`. The user can re-enable sounds with
+`/jobs-done-resume`, which removes the lockfile.
+
+While the lockfile exists, `jobs-done.sh done` and `jobs-done.sh input`
+both no-op and exit 0 silently. This means:
+
+- You can keep calling the script normally; the user just won't hear
+  anything.
+- But to save the tool call, **once you know mute is active**, simply
+  skip the call for the rest of the session.
+- After `/jobs-done-mute` was run, treat the entire session as muted
+  until the user explicitly runs `/jobs-done-resume`.
+- The lockfile lives in `/tmp/`, so it is auto-cleared on system reboot.
+
+If you ever want to check the current state, run:
+
+```bash
+"${SKILL_DIR}/jobs-done.sh" status
+```
+
+It prints `jobs-done: active` or `jobs-done: MUTED (...)`.
 
 ## Two sounds, two states (and one silent case)
 
@@ -246,6 +272,8 @@ exits with code 2. That's expected.
   new turn itself ends in "idle" or "blocked-on-input". NOT when it ends
   in "still waiting on background work, just acknowledging progress".
 - Never loop, never schedule, never queue multiple playbacks.
+- If the user ran `/jobs-done-mute` this session, skip the call entirely
+  for the rest of the session.
 
 ## Examples
 
