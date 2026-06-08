@@ -21,10 +21,9 @@ Do all of the following:
    ```
 
 3. For the rest of this session, do NOT invoke
-   `~/.claude/skills/jobs-done/jobs-done.sh done` or
-   `~/.claude/skills/jobs-done/jobs-done.sh input` — even at the end of
-   turns. The script itself would no-op while muted, but skipping the
-   call entirely saves a tool call.
+   `~/.claude/skills/jobs-done/jobs-done.sh input` or
+   `~/.claude/skills/jobs-done/jobs-done.sh skip`. The Stop-hook autofire
+   path also no-ops while muted, so nothing extra is needed from you.
 
 4. End this turn with a short confirmation like: "Sounds muted. Use
    `/jobs-done-resume` to re-enable."

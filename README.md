@@ -67,10 +67,20 @@ The installer:
 1. Drops the skill into `~/.claude/skills/jobs-done` and
    `~/.config/opencode/skills/jobs-done` (whichever clients are present).
 2. Installs the `/jobs-done-mute` and `/jobs-done-resume` slash commands.
-3. Adds a `SessionStart` hook to `~/.claude/settings.json` that injects
-   `SKILL.md` into every Claude Code session.
+3. Adds the following hooks to `~/.claude/settings.json`:
+   - `SessionStart` — `cat SKILL.md` (injects skill instructions) and
+     `jobs-done.sh session-reset` (clears per-turn markers).
+   - `Stop` — `jobs-done.sh autofire`. Plays the `done` sound at the end
+     of every main-agent turn so the model never has to remember.
+   - `SubagentStart` / `SubagentStop` — write/clear a marker file per
+     `agent_id`. The script reads these markers to detect "called from
+     inside a subagent" and silently no-op, so the GSD-style multi-wave
+     setups don't spam sounds.
 4. Adds `SKILL.md` to the `instructions` array in
    `~/.config/opencode/opencode.json` (opencode's equivalent of the hook).
+   opencode has no Stop / SubagentStop hooks, so on opencode the script
+   stays in model-driven mode (one explicit `done` or `input` call per
+   turn from the orchestrator only).
 5. Appends a short "auto-load skills" reminder to `~/.claude/CLAUDE.md`
    and `~/.config/opencode/AGENTS.md` as a fallback.
 
@@ -153,24 +163,35 @@ cp commands/opencode/jobs-done-resume.md ~/.config/opencode/command/
 
 ### Auto-load wiring
 
-For Claude Code, add a `SessionStart` hook to `~/.claude/settings.json`:
+For Claude Code, add five hook entries to `~/.claude/settings.json`
+(replace `/Users/YOU/` with your real home):
 
 ```json
 {
   "hooks": {
     "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cat \"/Users/YOU/.claude/skills/jobs-done/SKILL.md\""
-          }
-        ]
-      }
+      { "hooks": [{ "type": "command", "command": "cat \"/Users/YOU/.claude/skills/jobs-done/SKILL.md\"" }] },
+      { "hooks": [{ "type": "command", "command": "bash \"/Users/YOU/.claude/skills/jobs-done/jobs-done.sh\" session-reset" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "bash \"/Users/YOU/.claude/skills/jobs-done/jobs-done.sh\" autofire" }] }
+    ],
+    "SubagentStart": [
+      { "hooks": [{ "type": "command", "command": "bash \"/Users/YOU/.claude/skills/jobs-done/jobs-done.sh\" subagent-start" }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "bash \"/Users/YOU/.claude/skills/jobs-done/jobs-done.sh\" subagent-stop" }] }
     ]
   }
 }
 ```
+
+Only the `SessionStart` `cat SKILL.md` entry is strictly necessary for
+the skill to load. The other four turn the skill from "model has to
+remember to call jobs-done at the right moment" into "the harness fires
+it deterministically on Stop, and silences any call from inside a
+subagent". Without them, subagent-spawning frameworks (GSD, etc.) will
+keep playing sounds after every wave.
 
 For opencode, add the skill to the `instructions` array in
 `~/.config/opencode/opencode.json`:
@@ -256,16 +277,26 @@ echo 'export JOBS_DONE_AUDIO_INPUT="$HOME/sounds/needs-you.m4a"' >> ~/.zshrc
 ## CLI reference
 
 ```
-jobs-done.sh [done|input|mute|resume|status] [--wait] [-h|--help]
+jobs-done.sh [done|input|skip|mute|resume|status] [--wait] [-h|--help]
 ```
 
-| Subcommand | Effect                                                              |
-|------------|---------------------------------------------------------------------|
-| `done`     | Play the "work finished" sound (default if no subcommand)           |
-| `input`    | Play the "blocked, needs your decision" sound                       |
-| `mute`     | Create the lockfile. Subsequent `done`/`input` no-op until resume   |
-| `resume`   | Remove the lockfile. `done`/`input` play again                      |
-| `status`   | Print `jobs-done: active` or `jobs-done: MUTED (...)`               |
+| Subcommand | Effect                                                                  |
+|------------|-------------------------------------------------------------------------|
+| `done`     | Play the "work finished" sound (default if no subcommand). On Claude Code the `Stop` hook normally fires this for you; only call it manually for explicit testing. |
+| `input`    | Play the "blocked, needs your decision" sound. Call this BEFORE producing your final message when the answer gates next step. Also marks the turn so the Stop-hook autofire stays silent. |
+| `skip`     | Mark this turn as "silent on purpose" (e.g. background-task progress acknowledgement). The Stop-hook autofire will play nothing this turn. |
+| `mute`     | Create the lockfile. Subsequent sound-producing calls (manual or autofire) no-op until resume. |
+| `resume`   | Remove the lockfile. Sounds play again.                                 |
+| `status`   | Print `jobs-done: active` or `jobs-done: MUTED (...)`; also notes if any subagent marker is currently set. |
+
+Hook-facing modes (called from `settings.json` hook commands, not by the model):
+
+| Subcommand        | Caller            | Effect                                                  |
+|-------------------|-------------------|---------------------------------------------------------|
+| `autofire`        | `Stop` hook       | Plays `done` unless the model already played a sound or asked for `skip` this turn. Subagent-aware. |
+| `subagent-start`  | `SubagentStart`   | Reads JSON on stdin, writes a per-`agent_id` marker.    |
+| `subagent-stop`   | `SubagentStop`    | Reads JSON on stdin, removes the marker.                |
+| `session-reset`   | `SessionStart`    | Clears per-turn markers (does not touch subagent markers). |
 
 | Flag           | Effect                                              |
 |----------------|-----------------------------------------------------|
@@ -299,12 +330,13 @@ cd <wherever you cloned the repo>
 ./uninstall.sh
 ```
 
-This removes the skill directories, slash commands, the `SessionStart`
-hook entry from `settings.json`, the `instructions` entry from
-`opencode.json`, the auto-load sections from `CLAUDE.md` and `AGENTS.md`,
-and the mute lockfile. It leaves your existing non-jobs-done config
-untouched and keeps timestamped backups (`*.jobs-done-backup.*`) of any
-file it edited.
+This removes the skill directories, slash commands, ALL jobs-done hook
+entries (`SessionStart`, `Stop`, `SubagentStart`, `SubagentStop`) from
+`settings.json`, the `instructions` entry from `opencode.json`, the
+auto-load sections from `CLAUDE.md` and `AGENTS.md`, the mute lockfile,
+and the per-session state directory `$TMPDIR/jobs-done-state`. It leaves
+your existing non-jobs-done config untouched and keeps timestamped
+backups (`*.jobs-done-backup.*`) of any file it edited.
 
 ## Troubleshooting
 
@@ -330,9 +362,20 @@ script.
 Tighten your prompt: "Use `input` mode only when you've literally asked me
 a question and need my answer to proceed; otherwise use `done`."
 
-**Agent fires the skill mid-work.** Open `SKILL.md` and tighten the
-"When NOT to run" section, or just tell the agent in your prompt: "Run
-jobs-done only at the very end of the turn, never between steps."
+**Agent fires the skill mid-work.** On Claude Code, the `Stop` hook
+handles end-of-turn firing automatically, so you should not need to ask
+the model to fire it at all. If the model is still calling
+`jobs-done.sh done` manually mid-work, point it at the new `SKILL.md` —
+the model-driven `done` is no longer expected. On opencode (no `Stop`
+hook), tighten your prompt: "Run jobs-done only at the very end of the
+turn, never between steps."
+
+**Sounds fire after every subagent/wave under GSD or similar
+multi-agent frameworks.** Reinstall — the new install registers
+`SubagentStart` and `SubagentStop` hooks that mark active subagents,
+and `jobs-done.sh` silently no-ops any call from a subagent. The
+orchestrator's own `Stop` hook fires exactly once at the real end of
+the user-facing turn.
 
 **`install.sh` says "python3 not found".** Install Xcode Command Line
 Tools: `xcode-select --install`.

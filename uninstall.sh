@@ -5,11 +5,14 @@
 #   - skill directories ~/.claude/skills/jobs-done and
 #     ~/.config/opencode/skills/jobs-done
 #   - slash commands jobs-done-mute, jobs-done-resume from both clients
-#   - the SessionStart hook entry from ~/.claude/settings.json
+#   - ALL jobs-done hook entries from ~/.claude/settings.json:
+#     SessionStart (SKILL.md inject + session-reset), Stop (autofire),
+#     SubagentStart and SubagentStop (subagent markers)
 #   - the SKILL.md entry from `instructions` in ~/.config/opencode/opencode.json
 #   - the auto-load section (marked with HTML comments) from CLAUDE.md and
 #     AGENTS.md
 #   - the mute lockfile /tmp/jobs-done-mute, if any
+#   - the per-session state dir ${TMPDIR:-/tmp}/jobs-done-state
 #
 # Leaves alone:
 #   - your existing settings.json / opencode.json / CLAUDE.md / AGENTS.md
@@ -73,47 +76,64 @@ unpatch_claude_settings() {
   [[ -f "$CLAUDE_SETTINGS" ]] || return 0
   backup_file "$CLAUDE_SETTINGS"
 
-  "$PYTHON_BIN" - "$CLAUDE_SETTINGS" "$CLAUDE_SKILLS_DIR/SKILL.md" <<'PY'
+  "$PYTHON_BIN" - "$CLAUDE_SETTINGS" "$CLAUDE_SKILLS_DIR/SKILL.md" "$CLAUDE_SKILLS_DIR/jobs-done.sh" <<'PY'
 import json, sys
 
 path = sys.argv[1]
 skill_path = sys.argv[2]
+script_path = sys.argv[3]
 
 with open(path, "r") as f:
     data = json.load(f)
 
-session_start = (data.get("hooks") or {}).get("SessionStart") or []
-filtered = []
-removed = 0
-for entry in session_start:
-    inner = entry.get("hooks") or []
-    kept_inner = []
-    for inner_hook in inner:
-        cmd = inner_hook.get("command", "")
-        if skill_path in cmd and cmd.lstrip().startswith("cat"):
-            removed += 1
-            continue
-        kept_inner.append(inner_hook)
-    if kept_inner:
-        entry["hooks"] = kept_inner
-        filtered.append(entry)
-    elif not inner:
-        filtered.append(entry)
+hooks = data.get("hooks") or {}
+total_removed = 0
 
-if removed:
-    if filtered:
-        data["hooks"]["SessionStart"] = filtered
+def is_jobs_done_cmd(cmd):
+    # Match the SKILL.md cat injection (SessionStart-only) OR any reference
+    # to the jobs-done.sh script (all event types we register).
+    if skill_path in cmd and cmd.lstrip().startswith("cat"):
+        return True
+    if script_path in cmd:
+        return True
+    if "/jobs-done/jobs-done.sh" in cmd:
+        # Catches legacy/relative paths that still target this skill.
+        return True
+    return False
+
+for event_name in list(hooks.keys()):
+    entries = hooks.get(event_name) or []
+    filtered_entries = []
+    for entry in entries:
+        inner = entry.get("hooks") or []
+        kept_inner = []
+        for inner_hook in inner:
+            cmd = inner_hook.get("command", "")
+            if is_jobs_done_cmd(cmd):
+                total_removed += 1
+                continue
+            kept_inner.append(inner_hook)
+        if kept_inner:
+            entry["hooks"] = kept_inner
+            filtered_entries.append(entry)
+        elif not inner:
+            filtered_entries.append(entry)
+    if filtered_entries:
+        hooks[event_name] = filtered_entries
     else:
-        data["hooks"].pop("SessionStart", None)
-        if not data["hooks"]:
-            data.pop("hooks", None)
+        hooks.pop(event_name, None)
 
+if total_removed:
+    if hooks:
+        data["hooks"] = hooks
+    else:
+        data.pop("hooks", None)
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
         f.write("\n")
-    print(f"  - Removed {removed} jobs-done SessionStart hook entry/entries")
+    print(f"  - Removed {total_removed} jobs-done hook entry/entries")
 else:
-    print("  - No jobs-done SessionStart hook to remove")
+    print("  - No jobs-done hooks to remove")
 PY
 }
 
@@ -185,6 +205,14 @@ remove_mute_lockfile() {
   fi
 }
 
+remove_state_dir() {
+  local state_root="${TMPDIR:-/tmp}/jobs-done-state"
+  if [[ -d "$state_root" ]]; then
+    rm -rf "$state_root"
+    echo "  - Removed state directory $state_root"
+  fi
+}
+
 echo "Uninstalling jobs-done."
 
 if [[ -d "$CLAUDE_HOME" ]]; then
@@ -207,6 +235,7 @@ fi
 
 echo
 remove_mute_lockfile
+remove_state_dir
 
 echo
 echo "Done. Restart Claude Code / opencode to clear cached config."

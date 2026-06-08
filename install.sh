@@ -137,46 +137,77 @@ install_opencode_commands() {
 
 patch_claude_settings() {
   local skill_path="$CLAUDE_SKILLS_DIR/SKILL.md"
-  local marker="$skill_path"
+  local script_path="$CLAUDE_SKILLS_DIR/jobs-done.sh"
 
   if [[ ! -f "$CLAUDE_SETTINGS" ]]; then
     echo '{"hooks":{}}' > "$CLAUDE_SETTINGS"
   fi
 
-  "$PYTHON_BIN" - "$CLAUDE_SETTINGS" "$marker" <<'PY'
-import json, os, sys
+  "$PYTHON_BIN" - "$CLAUDE_SETTINGS" "$skill_path" "$script_path" <<'PY'
+import json, sys
 
-path = sys.argv[1]
+settings_path = sys.argv[1]
 skill_path = sys.argv[2]
-cat_cmd = f'cat "{skill_path}"'
+script_path = sys.argv[3]
 
-with open(path, "r") as f:
+with open(settings_path, "r") as f:
     data = json.load(f)
 
 hooks = data.setdefault("hooks", {})
-session_start = hooks.setdefault("SessionStart", [])
 
-# Idempotency: skip if any existing SessionStart hook already cats this file.
-for entry in session_start:
-    inner = entry.get("hooks") or []
-    for inner_hook in inner:
-        cmd = inner_hook.get("command", "")
-        if skill_path in cmd and cmd.lstrip().startswith("cat"):
-            print("  - Claude Code SessionStart hook already present")
-            sys.exit(0)
+def cmd_in_event(event_name, needle, prefix=None):
+    """Return True if any existing hook command in this event contains `needle`
+    (optionally, also starting with `prefix`)."""
+    for entry in hooks.get(event_name, []) or []:
+        for inner in entry.get("hooks") or []:
+            cmd = inner.get("command", "")
+            if needle in cmd and (prefix is None or cmd.lstrip().startswith(prefix)):
+                return True
+    return False
 
-session_start.append({
-    "hooks": [{
-        "type": "command",
-        "command": cat_cmd,
-    }],
-})
+def append_command_hook(event_name, command):
+    arr = hooks.setdefault(event_name, [])
+    arr.append({"hooks": [{"type": "command", "command": command}]})
 
-with open(path, "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
+changes = []
 
-print("  - Added SessionStart hook to settings.json")
+# SessionStart: inject SKILL.md (skill content) + reset per-turn state.
+if not cmd_in_event("SessionStart", skill_path, prefix="cat"):
+    append_command_hook("SessionStart", f'cat "{skill_path}"')
+    changes.append("SessionStart: inject SKILL.md")
+
+reset_cmd = f'bash "{script_path}" session-reset'
+if not cmd_in_event("SessionStart", "jobs-done.sh", prefix="bash"):
+    append_command_hook("SessionStart", reset_cmd)
+    changes.append("SessionStart: reset per-turn markers")
+
+# Stop: autofire `done` sound at the end of every main-agent turn.
+autofire_cmd = f'bash "{script_path}" autofire'
+if not cmd_in_event("Stop", "jobs-done.sh"):
+    append_command_hook("Stop", autofire_cmd)
+    changes.append("Stop: autofire done sound")
+
+# SubagentStart: mark agent_id as active so jobs-done.sh calls from inside
+# the subagent silently no-op.
+sub_start_cmd = f'bash "{script_path}" subagent-start'
+if not cmd_in_event("SubagentStart", "jobs-done.sh"):
+    append_command_hook("SubagentStart", sub_start_cmd)
+    changes.append("SubagentStart: mark subagent active")
+
+# SubagentStop: clear the agent_id marker.
+sub_stop_cmd = f'bash "{script_path}" subagent-stop'
+if not cmd_in_event("SubagentStop", "jobs-done.sh"):
+    append_command_hook("SubagentStop", sub_stop_cmd)
+    changes.append("SubagentStop: clear subagent marker")
+
+if not changes:
+    print("  - All Claude Code hooks already present")
+else:
+    with open(settings_path, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    for c in changes:
+        print(f"  - Added hook: {c}")
 PY
 }
 
